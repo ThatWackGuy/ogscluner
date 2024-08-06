@@ -99,10 +99,7 @@ impl SavedMessage {
         let ids = file_ids.split("\n");
 
         // get index of message
-        let index = match messages.position(|s| s == self.content) {
-            None => Err(Error::)
-            Some(_) => {}
-        };
+        let index = messages.position(|s| s == self.content).unwrap();
 
         // skip the index of deleted message
         let deleted_msg: Vec<&str> = messages.enumerate().filter_map(|(i, e)| if i != index { Some(e) } else { None }).collect();
