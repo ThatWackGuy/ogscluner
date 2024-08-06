@@ -1,0 +1,11 @@
+[package]
+name = "ogscluner"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+serenity = "0.12.2"
+regex = "1.10.6"
+rand = "0.8.5"
+shuttle-runtime = "0.47.0"
+shuttle-serenity = "0.47.0"
