@@ -392,10 +392,7 @@ impl EventHandler for SclunerHandler {
         if msg.mentions_me(ctx.http()).await.unwrap() {
             if !self.permission(msg.author.id) { return; }
 
-            let mut instance = self.instance.lock().unwrap();
-            let whitelist: &mut Vec<UserId> = instance.whitelist.borrow_mut();
-
-            if whitelist.contains(&msg.author.id) {
+            if self.whitelisted(msg.author.id) {
                 let rnd_msg;
                 {
                     let mut instance = self.instance.lock().unwrap();
@@ -415,6 +412,8 @@ impl EventHandler for SclunerHandler {
                 return;
             }
 
+            let mut instance = self.instance.lock().unwrap();
+            let whitelist: &mut Vec<UserId> = instance.whitelist.borrow_mut();
             println!("ADDING {} TO THE WHITELIST..", msg.author.name);
             whitelist.push(msg.author.id.clone());
 
