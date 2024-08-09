@@ -392,10 +392,30 @@ impl EventHandler for SclunerHandler {
         if msg.mentions_me(ctx.http()).await.unwrap() {
             if !self.permission(msg.author.id) { return; }
 
-            println!("ADDING {} TO THE WHITELIST..", msg.author.name);
-
             let mut instance = self.instance.lock().unwrap();
             let whitelist: &mut Vec<UserId> = instance.whitelist.borrow_mut();
+
+            if whitelist.contains(&msg.author.id) {
+                let rnd_msg;
+                {
+                    let mut instance = self.instance.lock().unwrap();
+                    rnd_msg = match instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id)).fetch_random() {
+                        None => {
+                            eprintln!("FAILED TO FETCH ALWAYS PROC RANDOM RESPONSE! NOTHING IN MESSAGES");
+                            return;
+                        }
+                        Some(m) => m
+                    };
+                }
+
+                if let Err(e) = msg.channel_id.say(ctx.http(), rnd_msg).await {
+                    eprintln!("FAILED TO SEND RANDOM RESPONSE: {}", e);
+                }
+
+                return;
+            }
+
+            println!("ADDING {} TO THE WHITELIST..", msg.author.name);
             whitelist.push(msg.author.id.clone());
 
             return;
