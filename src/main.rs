@@ -213,7 +213,7 @@ impl EventHandler for SclunerHandler {
 
                 match msg.content.as_str() {
                     "::SCL_DEL_CONTENT" => {
-                        if !reply_cmd || !self.permission(msg.author.id) { return; }
+                        if (!reply_cmd && !self.permission_dev(msg.author.id) && !self.permission_mod(msg.author.id)) || !self.permission(msg.author.id) { return; }
 
                         if let Err(e) = m.delete(ctx.http()).await {
                             eprintln!("FAILED TO DELETE REQUESTED DELETE SCLUNER MESSAGE: {}", e);
@@ -458,7 +458,7 @@ impl EventHandler for SclunerHandler {
 
             guild.messages.push(SclunerMessage::new(&msg));
 
-            // 1k message limit
+            // message limit
             if guild.messages.len() > 522 {
                 guild.messages.remove(0);
             }
