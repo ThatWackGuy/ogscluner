@@ -359,20 +359,22 @@ impl EventHandler for SclunerHandler {
                     },
 
                     _ => {
-                        let rnd_msg;
-                        {
-                            let mut instance = self.instance.lock().unwrap();
-                            rnd_msg = match instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id)).fetch_random() {
-                                None => {
-                                    eprintln!("FAILED TO FETCH ALWAYS PROC RANDOM RESPONSE! NOTHING IN MESSAGES");
-                                    return;
-                                }
-                                Some(m) => m
-                            };
-                        }
+                        if reply_cmd {
+                            let rnd_msg;
+                            {
+                                let mut instance = self.instance.lock().unwrap();
+                                rnd_msg = match instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id)).fetch_random() {
+                                    None => {
+                                        eprintln!("FAILED TO FETCH ALWAYS PROC RANDOM RESPONSE! NOTHING IN MESSAGES");
+                                        return;
+                                    }
+                                    Some(m) => m
+                                };
+                            }
 
-                        if let Err(e) = msg.channel_id.say(ctx.http(), rnd_msg).await {
-                            eprintln!("FAILED TO SEND RANDOM RESPONSE: {}", e);
+                            if let Err(e) = msg.channel_id.say(ctx.http(), rnd_msg).await {
+                                eprintln!("FAILED TO SEND RANDOM RESPONSE: {}", e);
+                            }
                         }
                     }
                 };
