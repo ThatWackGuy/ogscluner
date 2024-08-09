@@ -94,140 +94,126 @@ impl EventHandler for SclunerHandler {
         };
 
         match msg.referenced_message {
-            None => {}
+            None => {},
             Some(ref m) => {
-                if msg.content.starts_with("::SCL_DEL_USER ") {
-                    if !self.permission_dev(msg.author.id) && !self.permission_mod(msg.author.id) { return; }
+                let reply_cmd = msg.mentions_me(ctx.http()).await.unwrap();
+                if reply_cmd {
+                    if msg.content.starts_with("::SCL_DEL_USER ") {
+                        if !self.permission_dev(msg.author.id) && !self.permission_mod(msg.author.id) { return; }
 
-                    let user_id = match UserId::from_str(msg.content.replace("::SCL_DEL_USER ", "").as_str()) {
-                        Ok(id) => id,
-                        Err(_) => {
-                            if let Err(e) = msg.channel_id.say(ctx.http(), "GIVEN USERID WASN'T RIGHT").await {
-                                eprintln!("FAILED TO SEND MESSAGE DELETE USER ERROR: {}", e);
-                            };
+                        let user_id = match UserId::from_str(msg.content.replace("::SCL_DEL_USER ", "").as_str()) {
+                            Ok(id) => id,
+                            Err(_) => {
+                                if let Err(e) = msg.channel_id.say(ctx.http(), "GIVEN USERID WASN'T RIGHT").await {
+                                    eprintln!("FAILED TO SEND MESSAGE DELETE USER ERROR: {}", e);
+                                };
 
-                            return;
+                                return;
+                            }
+                        };
+
+                        {
+                            let mut instance = self.instance.lock().unwrap();
+                            instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id)).delete_message_sender(user_id);
                         }
-                    };
 
-                    {
-                        let mut instance = self.instance.lock().unwrap();
-                        instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id)).delete_message_sender(user_id);
-                    }
-
-                    if let Err(e) = msg.channel_id.say(ctx.http(), format!("DELETED ALL MESSAGES SENT BY <@{}>", user_id)).await {
-                        eprintln!("FAILED TO SEND MESSAGE DELETE USER CONFIRM: {}", e);
-                    }
-
-                    return;
-                }
-                else if msg.content.starts_with("::SCL_INFO_USER ") {
-                    if !self.permission_dev(msg.author.id) && !self.permission_mod(msg.author.id) { return; }
-
-                    let user_id = match UserId::from_str(msg.content.replace("::SCL_INFO_USER ", "").as_str()) {
-                        Ok(id) => id,
-                        Err(_) => {
-                            if let Err(e) = msg.channel_id.say(ctx.http(), "GIVEN USERID WASN'T RIGHT").await {
-                                eprintln!("FAILED TO SEND MESSAGE DELETE USER ERROR: {}", e);
-                            };
-
-                            return;
+                        if let Err(e) = msg.channel_id.say(ctx.http(), format!("DELETED ALL MESSAGES SENT BY <@{}>", user_id)).await {
+                            eprintln!("FAILED TO SEND MESSAGE DELETE USER CONFIRM: {}", e);
                         }
-                    };
 
-                    let mut fetched_info = "MESSAGES SENT BY GIVEN USER:\n".to_string();
+                        return;
+                    }
+                    else if msg.content.starts_with("::SCL_INFO_USER ") {
+                        if !self.permission_dev(msg.author.id) && !self.permission_mod(msg.author.id) { return; }
 
-                    {
-                        let mut instance = self.instance.lock().unwrap();
-                        let guild = instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id));
-                        for fetched in guild.fetch_from_user(user_id) {
-                            fetched_info = fetched_info + format!("{}\n", fetched.content).as_str();
+                        let user_id = match UserId::from_str(msg.content.replace("::SCL_INFO_USER ", "").as_str()) {
+                            Ok(id) => id,
+                            Err(_) => {
+                                if let Err(e) = msg.channel_id.say(ctx.http(), "GIVEN USERID WASN'T RIGHT").await {
+                                    eprintln!("FAILED TO SEND MESSAGE DELETE USER ERROR: {}", e);
+                                };
+
+                                return;
+                            }
+                        };
+
+                        let mut fetched_info = "MESSAGES SENT BY GIVEN USER:\n".to_string();
+
+                        {
+                            let mut instance = self.instance.lock().unwrap();
+                            let guild = instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id));
+                            for fetched in guild.fetch_from_user(user_id) {
+                                fetched_info = fetched_info + format!("{}\n", fetched.content).as_str();
+                            }
                         }
-                    }
 
-                    if let Err(e) = msg.channel_id.say(ctx.http(), fetched_info).await {
-                        eprintln!("FAILED TO SEND MESSAGE INFO FROM USER: {}", e);
-                    }
-
-                    return;
-                }
-                else if msg.content.starts_with("::SCL_PROC ") {
-                    if !self.permission_dev(msg.author.id) && !self.permission_mod(msg.author.id) { return; }
-
-                    let procs: Vec<Result<u32, ParseIntError>> = msg.content.replace("::SCL_PROC ", "").split(" ").map(|p| u32::from_str(p)).collect();
-                    if procs.len() != 3 || procs.iter().any(|p| p.is_err()) {
-                        if let Err(e) = msg.channel_id.say(ctx.http(), "COMMAND IS ::SCL_PROC MIN MAX OUT_OF\nALL 32 BIT NUMBERS").await {
-                            eprintln!("FAILED TO PROC REASSIGN: {}", e);
+                        if let Err(e) = msg.channel_id.say(ctx.http(), fetched_info).await {
+                            eprintln!("FAILED TO SEND MESSAGE INFO FROM USER: {}", e);
                         }
+
+                        return;
                     }
+                    else if msg.content.starts_with("::SCL_PROC ") {
+                        if !self.permission_dev(msg.author.id) && !self.permission_mod(msg.author.id) { return; }
 
-                    let proc_nums: Vec<u32> = procs.iter().map(|p| p.clone().unwrap()).collect();
-
-                    let min = proc_nums.get(0).unwrap();
-                    let max = proc_nums.get(1).unwrap();
-                    let out_of = proc_nums.get(2).unwrap();
-
-                    {
-                        let mut instance = self.instance.lock().unwrap();
-                        let guild = instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id));
-
-                        guild.min_proc = *min;
-                        guild.max_proc = *max;
-                        guild.proc_out_of = *out_of;
-                    }
-
-                    if let Err(e) = msg.channel_id.say(ctx.http(), "SUCCESSFULLY SET PROC VARS").await {
-                        eprintln!("FAILED TO PROC REASSIGN CONFIRM: {}", e);
-                    }
-
-                    return;
-                }
-                else if msg.content.starts_with("::SCL_SHUT_UP ") {
-                    if !self.permission_dev(msg.author.id) && !self.permission_mod(msg.author.id) { return; }
-
-                    let shut = {
-                        let mut instance = self.instance.lock().unwrap();
-                        let guild = instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id));
-                        guild.shut_up = !guild.shut_up;
-
-                        guild.shut_up
-                    };
-
-                    if let Err(e) = msg.channel_id.say(ctx.http(), format!("SCLUNER WILL NOW SHUT UP: {}", shut)).await {
-                        eprintln!("FAILED TO SHUT UP CONFIRMATION: {}", e);
-                    }
-
-                    return;
-                }
-                else if msg.content.starts_with("::SCL_MOD ") {
-                    if !self.permission_dev(msg.author.id) { return; }
-
-                    let user_id = match UserId::from_str(msg.content.replace("::SCL_MOD ", "").as_str()) {
-                        Ok(id) => id,
-                        Err(_) => {
-                            if let Err(e) = msg.channel_id.say(ctx.http(), "GIVEN USERID WASN'T RIGHT").await {
-                                eprintln!("FAILED TO SEND MODERATOR SET ERROR: {}", e);
-                            };
-
-                            return;
+                        let procs: Vec<Result<u32, ParseIntError>> = msg.content.replace("::SCL_PROC ", "").split(" ").map(|p| u32::from_str(p)).collect();
+                        if procs.len() != 3 || procs.iter().any(|p| p.is_err()) {
+                            if let Err(e) = msg.channel_id.say(ctx.http(), "COMMAND IS ::SCL_PROC MIN MAX OUT_OF\nALL 32 BIT NUMBERS").await {
+                                eprintln!("FAILED TO PROC REASSIGN: {}", e);
+                            }
                         }
-                    };
 
-                    {
-                        let mut instance = self.instance.lock().unwrap();
-                        instance.modlist.push(user_id)
+                        let proc_nums: Vec<u32> = procs.iter().map(|p| p.clone().unwrap()).collect();
+
+                        let min = proc_nums.get(0).unwrap();
+                        let max = proc_nums.get(1).unwrap();
+                        let out_of = proc_nums.get(2).unwrap();
+
+                        {
+                            let mut instance = self.instance.lock().unwrap();
+                            let guild = instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id));
+
+                            guild.min_proc = *min;
+                            guild.max_proc = *max;
+                            guild.proc_out_of = *out_of;
+                        }
+
+                        if let Err(e) = msg.channel_id.say(ctx.http(), "SUCCESSFULLY SET PROC VARS").await {
+                            eprintln!("FAILED TO PROC REASSIGN CONFIRM: {}", e);
+                        }
+
+                        return;
                     }
+                    else if msg.content.starts_with("::SCL_MOD ") {
+                        if !self.permission_dev(msg.author.id) { return; }
 
-                    if let Err(e) = msg.channel_id.say(ctx.http(), format!("ADDED MODERATOR <@{}>", user_id)).await {
-                        eprintln!("FAILED TO SEND MOD SET CONFIRMATION: {}", e);
+                        let user_id = match UserId::from_str(msg.content.replace("::SCL_MOD ", "").as_str()) {
+                            Ok(id) => id,
+                            Err(_) => {
+                                if let Err(e) = msg.channel_id.say(ctx.http(), "GIVEN USERID WASN'T RIGHT").await {
+                                    eprintln!("FAILED TO SEND MODERATOR SET ERROR: {}", e);
+                                };
+
+                                return;
+                            }
+                        };
+
+                        {
+                            let mut instance = self.instance.lock().unwrap();
+                            instance.modlist.push(user_id)
+                        }
+
+                        if let Err(e) = msg.channel_id.say(ctx.http(), format!("ADDED MODERATOR <@{}>", user_id)).await {
+                            eprintln!("FAILED TO SEND MOD SET CONFIRMATION: {}", e);
+                        }
+
+                        return;
                     }
-
-                    return;
                 }
 
                 match msg.content.as_str() {
                     "::SCL_DEL_CONTENT" => {
-                        if !self.permission(msg.author.id) { return; }
+                        if !reply_cmd || !self.permission(msg.author.id) { return; }
 
                         if let Err(e) = m.delete(ctx.http()).await {
                             eprintln!("FAILED TO DELETE REQUESTED DELETE SCLUNER MESSAGE: {}", e);
@@ -247,7 +233,7 @@ impl EventHandler for SclunerHandler {
                         return;
                     },
                     "::SCL_INFO_CONTENT" => {
-                        if !self.permission(msg.author.id) { return; }
+                        if !reply_cmd || !self.permission(msg.author.id) { return; }
 
                         let mut fetched_info = "MESSAGE ORIGINALLY SENT BY USERS:\n".to_string();
 
@@ -265,18 +251,20 @@ impl EventHandler for SclunerHandler {
                         return;
                     },
                     "::SCL_PROC" => {
+                        if !reply_cmd || !self.permission(msg.author.id) { return; }
+
                         let info = {
                             let mut instance = self.instance.lock().unwrap();
                             let guild = instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id));
 
                             format!("MIN_PROC: {}\nMAX_PROC: {}\nPROC_OUT_OF:{}\nCHANCE OF SENDING REPLY PER MESSAGE: [{}..{}] / {}",
-                                guild.min_proc,
-                                guild.max_proc,
-                                guild.proc_out_of,
+                                    guild.min_proc,
+                                    guild.max_proc,
+                                    guild.proc_out_of,
 
-                                guild.min_proc,
-                                guild.max_proc,
-                                guild.proc_out_of,
+                                    guild.min_proc,
+                                    guild.max_proc,
+                                    guild.proc_out_of,
                             )
                         };
 
@@ -285,10 +273,28 @@ impl EventHandler for SclunerHandler {
                         }
 
                         return;
-                    }
+                    },
+
+                    "::SCL_SHUT_UP" => {
+                        if !reply_cmd || (!self.permission_dev(msg.author.id) && !self.permission_mod(msg.author.id)) { return; }
+
+                        let shut = {
+                            let mut instance = self.instance.lock().unwrap();
+                            let guild = instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id));
+                            guild.shut_up = !guild.shut_up;
+
+                            guild.shut_up
+                        };
+
+                        if let Err(e) = msg.channel_id.say(ctx.http(), format!("SCLUNER WILL NOW SHUT UP: {}", shut)).await {
+                            eprintln!("FAILED TO SHUT UP CONFIRMATION: {}", e);
+                        }
+
+                        return;
+                    },
 
                     "::SCL_BACKUP_SEND" => {
-                        if !self.permission_dev(msg.author.id) { return; }
+                        if !reply_cmd || !self.permission_dev(msg.author.id) { return; }
 
                         let backup;
                         {
@@ -305,7 +311,7 @@ impl EventHandler for SclunerHandler {
                         return;
                     },
                     "::SCL_BACKUP_LOAD" => {
-                        if !self.permission_dev(msg.author.id) { return; }
+                        if !reply_cmd || !self.permission_dev(msg.author.id) { return; }
 
                         let file_download = match msg.attachments.get(0) {
                             None => {
@@ -353,8 +359,6 @@ impl EventHandler for SclunerHandler {
                     },
 
                     _ => {
-                        if !msg.mentions_me(ctx.http()).await.unwrap() { return; }
-
                         let rnd_msg;
                         {
                             let mut instance = self.instance.lock().unwrap();
@@ -370,11 +374,16 @@ impl EventHandler for SclunerHandler {
                         if let Err(e) = msg.channel_id.say(ctx.http(), rnd_msg).await {
                             eprintln!("FAILED TO SEND RANDOM RESPONSE: {}", e);
                         }
-
-                        return;
                     }
-                }
+                };
             }
+        };
+
+        {
+            let mut instance = self.instance.lock().unwrap();
+            let guild = instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id));
+
+            if guild.shut_up { return; }
         }
 
         // scluner mention is special as it adds you to the whitelist
@@ -397,7 +406,6 @@ impl EventHandler for SclunerHandler {
             let guild = instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id));
 
             send_random = thread_rng().gen_ratio(guild.proc, guild.proc_out_of);
-            if guild.shut_up { send_random = false }
 
             if send_random {
                 guild.proc = thread_rng().gen_range(guild.min_proc..guild.max_proc);
