@@ -1,331 +1,566 @@
+use std::collections::HashMap;
 use std::fs;
-use std::io::{Read, Write};
-use std::ops::Add;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use std::borrow::BorrowMut;
+use std::num::ParseIntError;
 use rand::prelude::*;
-use regex::Regex;
+use rand::thread_rng;
 use serenity::all::*;
-use serenity::futures::StreamExt;
-use serenity::prelude::*;
-use shuttle_runtime::__internals::Context;
-use shuttle_runtime::SecretStore;
+use shuttle_runtime::{SecretStore, tokio};
+use serde::{Deserialize, Serialize};
 
-struct SavedMessage {
-    pub guild_id: GuildId,
-    pub user_id: UserId,
-    pub content: String,
-
-    messages_path: String,
-    users_path: String
+#[derive(Serialize, Deserialize, Clone)]
+struct SclunerMessage {
+    user_id: UserId,
+    content: String
 }
 
-impl SavedMessage {
-    pub fn new(msg: Message, guild_id: GuildId) -> Self {
-        let messages_path = format!("./{}_msg", guild_id);
-        let users_path = format!("./{}_id", guild_id);
-
-        if let Err(_) = fs::metadata(&messages_path) { fs::write(&messages_path, "").unwrap() }
-        if let Err(_) = fs::metadata(&users_path) { fs::write(&users_path, "").unwrap() }
-
-        return Self {
-            guild_id,
-            user_id: msg.author.id,
-            content: msg.content,
-
-            messages_path: format!("./{}_msg", guild_id),
-            users_path: format!("./{}_id", guild_id),
+impl SclunerMessage {
+    fn new(msg: &Message) -> Self {
+        Self {
+            user_id: msg.author.id.clone(),
+            content: msg.content.clone()
         }
-    }
-
-    pub fn find_from_message(content: String, guild_id: GuildId) -> Option<Self> {
-        let messages_path = format!("./{}_msg", guild_id);
-        let users_path = format!("./{}_id", guild_id);
-
-        let msg_file = fs::read_to_string(&messages_path).unwrap();
-        let mut messages = msg_file.split("\n");
-        let msg_index = match messages.position(|x| x == content) {
-            None => return None,
-            Some(idx) => idx
-        };
-
-        println!("FETCHING LINE: {}", msg_index);
-
-        let message = messages.nth(msg_index).unwrap();
-        let file_users = fs::read_to_string(&users_path).unwrap();
-        let user = file_users.split("\n").nth(msg_index).unwrap();
-
-        Some(Self {
-            guild_id,
-            user_id: UserId::from_str(user).unwrap(),
-            content:  message.to_string(),
-
-            messages_path,
-            users_path
-        })
-    }
-
-    fn fetch_random(guild_id: GuildId) -> String {
-        let file_msg = fs::read_to_string(format!("./{}_msg", guild_id)).unwrap();
-        file_msg.split("\n").choose(&mut thread_rng()).unwrap().to_string()
-    }
-
-    fn save(&self) {
-        let mut file_msg = fs::OpenOptions::new()
-            .read(true)
-            .append(true)
-            .open(&self.messages_path)
-            .unwrap();
-
-        let mut file_ids = fs::OpenOptions::new()
-            .read(true)
-            .append(true)
-            .open(&self.users_path)
-            .unwrap();
-
-        if let Err(e) = writeln!(file_msg, "{}", self.content) {
-            eprintln!("COULDN'T ADD MESSAGE TO FILE: {}", e);
-        }
-
-        if let Err(e) = writeln!(file_ids, "{}", self.user_id) {
-            eprintln!("COULDN'T ADD MESSAGE USER ID TO FILE: {}", e);
-        }
-    }
-
-    fn delete(&self) -> Result<()> {
-        let file_msg = fs::read_to_string(&self.messages_path)?;
-        let file_ids = fs::read_to_string(&self.users_path)?;
-
-        let mut messages = file_msg.split("\n");
-        let ids = file_ids.split("\n");
-
-        // get index of message
-        let index = messages.position(|s| s == self.content).unwrap();
-
-        // skip the index of deleted message
-        let deleted_msg: Vec<&str> = messages.enumerate().filter_map(|(i, e)| if i != index { Some(e) } else { None }).collect();
-        let deleted_ids: Vec<&str> = ids.enumerate().filter_map(|(i, e)| if i != index { Some(e) } else { None }).collect();
-
-        let msg_overwrite = deleted_msg.join("\n");
-        let id_overwrite = deleted_ids.join("\n");
-
-        // overwrite file
-        fs::write(&self.messages_path, msg_overwrite)?;
-        fs::write(&self.users_path, id_overwrite)?;
-
-        Ok(())
     }
 }
 
-struct Handler;
+#[derive(Serialize, Deserialize, Clone)]
+struct SclunerGuild {
+    guild_id: GuildId,
+    messages: Vec<SclunerMessage>,
+    shut_up: bool,
+
+    min_proc: u32,
+    max_proc: u32,
+    proc_out_of: u32,
+
+    proc: u32,
+}
+
+impl SclunerGuild {
+    fn new(guild_id: GuildId) -> Self {
+        Self {
+            guild_id,
+            messages: Vec::new(),
+            shut_up: false,
+
+            min_proc: 1,
+            max_proc: 4,
+            proc_out_of: 18,
+
+            proc: thread_rng().gen_range(1..4)
+        }
+    }
+
+    fn fetch_random(&mut self) -> Option<String> {
+        let messages = &self.messages;
+        match messages.choose(&mut thread_rng()) {
+            None => None,
+            Some(c) => Some(c.content.clone())
+        }
+    }
+
+    fn fetch_from_content(&mut self, content: String) -> Vec<&SclunerMessage> {
+        self.messages.iter().filter(|m| m.content == content).collect()
+    }
+
+    fn fetch_from_user(&mut self, user_id: UserId) -> Vec<&SclunerMessage> {
+        self.messages.iter().filter(|m| m.user_id == user_id).collect()
+    }
+
+    fn delete_message_sender(&mut self, user_id: UserId) {
+        self.messages.retain(|m| m.user_id != user_id);
+    }
+
+    fn delete_message_content(&mut self, content: &String) {
+        self.messages.retain(|m| m.content != *content);
+    }
+}
+
+struct SclunerHandler {
+    instance: Arc<Mutex<SclunerInstance>>
+}
 
 #[async_trait]
-impl EventHandler for Handler {
-    async fn message(&self, ctx: prelude::Context, msg: Message) {
+impl EventHandler for SclunerHandler {
+    async fn message(&self, ctx: Context, msg: Message) {
         if msg.author.bot { return; }
+
         let guild_id = match msg.guild_id {
             None => return,
             Some(id) => id
         };
 
-        // skip any messages with mentions
-        if msg.kind != MessageType::InlineReply && msg.mentions.len() > 0 {
-            // ogscluner mention is special as it adds you to the whitelist
-            match msg.mentions.iter().find(|u| u.id == 1268981775158476982) {
-                None => {}
-                Some(_) => {
-                    println!("ADDING {} TO THE WHITELIST..", msg.author.name);
+        match msg.referenced_message {
+            None => {}
+            Some(ref m) => {
+                if msg.content.starts_with("::SCL_DEL_USER ") {
+                    if !self.permission_dev(msg.author.id) && !self.permission_mod(msg.author.id) { return; }
 
-                    let wh_file = fs::read_to_string("./whitelist").unwrap();
-                    if wh_file.split("\n").any(|u| u == msg.author.id.to_string()) { return; }
+                    let user_id = match UserId::from_str(msg.content.replace("::SCL_DEL_USER ", "").as_str()) {
+                        Ok(id) => id,
+                        Err(_) => {
+                            if let Err(e) = msg.channel_id.say(ctx.http(), "GIVEN USERID WASN'T RIGHT").await {
+                                eprintln!("FAILED TO SEND MESSAGE DELETE USER ERROR: {}", e);
+                            };
 
-                    let mut whitelist = fs::OpenOptions::new()
-                        .read(true)
-                        .append(true)
-                        .open("./whitelist")
-                        .unwrap();
+                            return;
+                        }
+                    };
 
-                    if let Err(e) = writeln!(whitelist, "{}", msg.author.id) {
-                        eprintln!("COULDN'T ADD USER TO WHITELIST: {}", e);
+                    {
+                        let mut instance = self.instance.lock().unwrap();
+                        instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id)).delete_message_sender(user_id);
+                    }
+
+                    if let Err(e) = msg.channel_id.say(ctx.http(), format!("DELETED ALL MESSAGES SENT BY <@{}>", user_id)).await {
+                        eprintln!("FAILED TO SEND MESSAGE DELETE USER CONFIRM: {}", e);
+                    }
+
+                    return;
+                }
+                else if msg.content.starts_with("::SCL_INFO_USER ") {
+                    if !self.permission_dev(msg.author.id) && !self.permission_mod(msg.author.id) { return; }
+
+                    let user_id = match UserId::from_str(msg.content.replace("::SCL_INFO_USER ", "").as_str()) {
+                        Ok(id) => id,
+                        Err(_) => {
+                            if let Err(e) = msg.channel_id.say(ctx.http(), "GIVEN USERID WASN'T RIGHT").await {
+                                eprintln!("FAILED TO SEND MESSAGE DELETE USER ERROR: {}", e);
+                            };
+
+                            return;
+                        }
+                    };
+
+                    let mut fetched_info = "MESSAGES SENT BY GIVEN USER:\n".to_string();
+
+                    {
+                        let mut instance = self.instance.lock().unwrap();
+                        let guild = instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id));
+                        for fetched in guild.fetch_from_user(user_id) {
+                            fetched_info = fetched_info + format!("{}\n", fetched.content).as_str();
+                        }
+                    }
+
+                    if let Err(e) = msg.channel_id.say(ctx.http(), fetched_info).await {
+                        eprintln!("FAILED TO SEND MESSAGE INFO FROM USER: {}", e);
+                    }
+
+                    return;
+                }
+                else if msg.content.starts_with("::SCL_PROC ") {
+                    if !self.permission_dev(msg.author.id) && !self.permission_mod(msg.author.id) { return; }
+
+                    let procs: Vec<Result<u32, ParseIntError>> = msg.content.replace("::SCL_PROC ", "").split(" ").map(|p| u32::from_str(p)).collect();
+                    if procs.len() != 3 || procs.iter().any(|p| p.is_err()) {
+                        if let Err(e) = msg.channel_id.say(ctx.http(), "COMMAND IS ::SCL_PROC MIN MAX OUT_OF\nALL 32 BIT NUMBERS").await {
+                            eprintln!("FAILED TO PROC REASSIGN: {}", e);
+                        }
+                    }
+
+                    let proc_nums: Vec<u32> = procs.iter().map(|p| p.clone().unwrap()).collect();
+
+                    let min = proc_nums.get(0).unwrap();
+                    let max = proc_nums.get(1).unwrap();
+                    let out_of = proc_nums.get(2).unwrap();
+
+                    {
+                        let mut instance = self.instance.lock().unwrap();
+                        let guild = instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id));
+
+                        guild.min_proc = *min;
+                        guild.max_proc = *max;
+                        guild.proc_out_of = *out_of;
+                    }
+
+                    if let Err(e) = msg.channel_id.say(ctx.http(), "SUCCESSFULLY SET PROC VARS").await {
+                        eprintln!("FAILED TO PROC REASSIGN CONFIRM: {}", e);
+                    }
+
+                    return;
+                }
+                else if msg.content.starts_with("::SCL_SHUT_UP ") {
+                    if !self.permission_dev(msg.author.id) && !self.permission_mod(msg.author.id) { return; }
+
+                    let shut = {
+                        let mut instance = self.instance.lock().unwrap();
+                        let guild = instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id));
+                        guild.shut_up = !guild.shut_up;
+
+                        guild.shut_up
+                    };
+
+                    if let Err(e) = msg.channel_id.say(ctx.http(), format!("SCLUNER WILL NOW SHUT UP: {}", shut)).await {
+                        eprintln!("FAILED TO SHUT UP CONFIRMATION: {}", e);
+                    }
+
+                    return;
+                }
+                else if msg.content.starts_with("::SCL_MOD ") {
+                    if !self.permission_dev(msg.author.id) { return; }
+
+                    let user_id = match UserId::from_str(msg.content.replace("::SCL_MOD ", "").as_str()) {
+                        Ok(id) => id,
+                        Err(_) => {
+                            if let Err(e) = msg.channel_id.say(ctx.http(), "GIVEN USERID WASN'T RIGHT").await {
+                                eprintln!("FAILED TO SEND MODERATOR SET ERROR: {}", e);
+                            };
+
+                            return;
+                        }
+                    };
+
+                    {
+                        let mut instance = self.instance.lock().unwrap();
+                        instance.modlist.push(user_id)
+                    }
+
+                    if let Err(e) = msg.channel_id.say(ctx.http(), format!("ADDED MODERATOR <@{}>", user_id)).await {
+                        eprintln!("FAILED TO SEND MOD SET CONFIRMATION: {}", e);
+                    }
+
+                    return;
+                }
+
+                match msg.content.as_str() {
+                    "::SCL_DEL_CONTENT" => {
+                        if !self.permission(msg.author.id) { return; }
+
+                        if let Err(e) = m.delete(ctx.http()).await {
+                            eprintln!("FAILED TO DELETE REQUESTED DELETE SCLUNER MESSAGE: {}", e);
+                        }
+
+                        {
+                            let mut instance = self.instance.lock().unwrap();
+                            let guild = instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id));
+
+                            guild.delete_message_content(&msg.content);
+                        }
+
+                        if let Err(e) = msg.channel_id.say(ctx.http(), "DELETED ALL MESSAGES WITH CONTENT").await {
+                            eprintln!("FAILED TO SEND MESSAGE DELETE CONTENT CONFIRM: {}", e);
+                        }
+
+                        return;
+                    },
+                    "::SCL_INFO_CONTENT" => {
+                        if !self.permission(msg.author.id) { return; }
+
+                        let mut fetched_info = "MESSAGE ORIGINALLY SENT BY USERS:\n".to_string();
+
+                        {
+                            let mut instance = self.instance.lock().unwrap();
+                            for fetched in instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id)).fetch_from_content(m.content.clone()) {
+                                fetched_info = fetched_info + format!("<@{}>\n", fetched.user_id).as_str();
+                            }
+                        }
+
+                        if let Err(e) = msg.channel_id.say(ctx.http(), fetched_info).await {
+                            eprintln!("FAILED TO SEND MESSAGE INFO FROM CONTENT: {}", e);
+                        }
+
+                        return;
+                    },
+                    "::SCL_PROC" => {
+                        let info = {
+                            let mut instance = self.instance.lock().unwrap();
+                            let guild = instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id));
+
+                            format!("MIN_PROC: {}\nMAX_PROC: {}\nPROC_OUT_OF:{}\nCHANCE OF SENDING REPLY PER MESSAGE: [{}..{}] / {}",
+                                guild.min_proc,
+                                guild.max_proc,
+                                guild.proc_out_of,
+
+                                guild.min_proc,
+                                guild.max_proc,
+                                guild.proc_out_of,
+                            )
+                        };
+
+                        if let Err(e) = msg.channel_id.say(ctx.http(), info).await {
+                            eprintln!("FAILED TO PROC INFO: {}", e);
+                        }
+
+                        return;
+                    }
+
+                    "::SCL_BACKUP_SEND" => {
+                        if !self.permission_dev(msg.author.id) { return; }
+
+                        let backup;
+                        {
+                            let instance = self.instance.lock().unwrap();
+                            backup = SclunerBackup::new(&instance.guilds, &instance.whitelist, &instance.blacklist, &instance.modlist);
+                        }
+
+                        backup.save(&ctx).await;
+
+                        if let Err(e) = msg.channel_id.say(ctx.http(), "SUCCESSFULLY SENT BACKUP TO CHANNEL").await {
+                            eprintln!("FAILED TO SEND BACKUP CONFIRMATION: {}", e);
+                        }
+
+                        return;
+                    },
+                    "::SCL_BACKUP_LOAD" => {
+                        if !self.permission_dev(msg.author.id) { return; }
+
+                        let file_download = match msg.attachments.get(0) {
+                            None => {
+                                if let Err(e) = msg.channel_id.say(ctx.http(), "FILE COULDN'T BE FOUND").await {
+                                    eprintln!("FAILED TO SEND LOAD FAILURE: {}", e);
+                                }
+
+                                return;
+                            }
+                            Some(a) => a
+                        }.download().await;
+
+                        let backup = match file_download {
+                            Ok(f) => {
+                                match serde_cbor::from_slice::<SclunerBackup>(f.as_slice()) {
+                                    Ok(b) => b,
+                                    Err(e) => {
+                                        if let Err(e) = msg.channel_id.say(ctx.http(), format!("FILE COULDN'T BE DESERIALIZED: {}", e)).await {
+                                            eprintln!("FAILED TO SEND LOAD FAILURE: {}", e);
+                                        }
+
+                                        return;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                if let Err(e) = msg.channel_id.say(ctx.http(), format!("FILE COULDN'T BE DOWNLOADED: {}", e)).await {
+                                    eprintln!("FAILED TO SEND LOAD FAILURE: {}", e);
+                                }
+
+                                return;
+                            }
+                        };
+
+                        {
+                            let mut instance = self.instance.lock().unwrap();
+                            instance.load_backup(backup);
+                        }
+
+                        if let Err(e) = msg.channel_id.say(ctx.http(), "SUCCESSFULLY LOADED BACKUP").await {
+                            eprintln!("FAILED TO SEND LOAD CONFIRMATION: {}", e);
+                        }
+
+                        return;
+                    },
+
+                    _ => {
+                        if !msg.mentions_me(ctx.http()).await.unwrap() { return; }
+
+                        let rnd_msg;
+                        {
+                            let mut instance = self.instance.lock().unwrap();
+                            rnd_msg = match instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id)).fetch_random() {
+                                None => {
+                                    eprintln!("FAILED TO FETCH ALWAYS PROC RANDOM RESPONSE! NOTHING IN MESSAGES");
+                                    return;
+                                }
+                                Some(m) => m
+                            };
+                        }
+
+                        if let Err(e) = msg.channel_id.say(ctx.http(), rnd_msg).await {
+                            eprintln!("FAILED TO SEND RANDOM RESPONSE: {}", e);
+                        }
+
+                        return;
                     }
                 }
             }
+        }
+
+        // scluner mention is special as it adds you to the whitelist
+        if msg.mentions_me(ctx.http()).await.unwrap() {
+            if !self.permission(msg.author.id) { return; }
+
+            println!("ADDING {} TO THE WHITELIST..", msg.author.name);
+
+            let mut instance = self.instance.lock().unwrap();
+            let whitelist: &mut Vec<UserId> = instance.whitelist.borrow_mut();
+            whitelist.push(msg.author.id.clone());
 
             return;
         }
 
-        // skip any message mentioning the scule
-        if let Some(_) = Regex::new("scluner").unwrap().find(msg.content.as_str()) { return; }
+        let mut send_random;
+        let random_msg;
+        {
+            let mut instance = self.instance.lock().unwrap();
+            let guild = instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id));
 
-        let save_msg = SavedMessage::new(msg.clone(), guild_id);
+            send_random = thread_rng().gen_ratio(guild.proc, guild.proc_out_of);
+            if guild.shut_up { send_random = false }
 
-        if msg.kind == MessageType::InlineReply && msg.mentions[0].id == 1268981775158476982 {
-            let ref_msg = msg.clone().referenced_message.unwrap();
+            if send_random {
+                guild.proc = thread_rng().gen_range(guild.min_proc..guild.max_proc);
 
-            // ELSE IF HELL
-            // I DON'T CARE ENOUGH TO FIX
+                random_msg = match guild.fetch_random() {
+                    None => {
+                        eprintln!("FAILED TO FETCH RANDOM PROC RESPONSE! NOTHING IN MESSAGES");
 
-            // LOAD MESSAGES INTO FILE
-            if msg.content.starts_with("::SCL_LOAD_MSG") {
-                if msg.author.id != 407991620164911118 { return; }
-
-                fs::write(save_msg.messages_path, msg.content.replace("::SCL_LOAD_MSG\n", "")).unwrap();
-                msg.channel_id.say(ctx.http(), "MANUAL MESSAGE LOAD SUCCESSFUL").await.unwrap();
-
-                return;
-            }
-            // LOAD USERS INTO FILE
-            else if msg.content.starts_with("::SCL_LOAD_ID") {
-                if msg.author.id != 407991620164911118 { return; }
-
-                fs::write(save_msg.users_path, msg.content.replace("::SCL_LOAD_ID\n", "")).unwrap();
-                msg.channel_id.say(ctx.http(), "MANUAL ID LOAD SUCCESSFUL").await.unwrap();
-
-                return;
-            }
-            // LOAD USERS INTO FILE
-            else if msg.content.starts_with("::SCL_LOAD_WHITELIST") {
-                if msg.author.id != 407991620164911118 { return; }
-
-                fs::write("./whitelist", msg.content.replace("::SCL_LOAD_WHITELIST\n", "")).unwrap();
-                msg.channel_id.say(ctx.http(), "MANUAL WHITELIST LOAD SUCCESSFUL").await.unwrap();
-
-                return;
-            }
-
-            match msg.content.as_str() {
-                // DELETE COMMAND
-                "::SCL_DEL" => {
-                    let find_msg: SavedMessage = match SavedMessage::find_from_message(ref_msg.content, guild_id) {
-                        None => {
-                            msg.channel_id.say(ctx.http(), "COULDN'T FIND MESSAGE IN LIST").await.unwrap();
-                            return;
-                        }
-                        Some(m) => m
-                    };
-
-                    msg.delete(ctx.http()).await.unwrap();
-                    match find_msg.delete() {
-                        Ok(_) => {
-                            msg.channel_id.say(ctx.http(), "DELETED MESSAGE OFF OF LIST").await.unwrap();
-                        }
-                        Err(e) => {
-                            msg.channel_id.say(ctx.http(), format!("FAILED TO DELETE:\n{}", e)).await.unwrap();
-                        }
+                        send_random = false;
+                        "".to_string()
                     }
-                },
-                // INFO COMMAND
-                "::SCL_INFO" => {
-                    let find_msg: SavedMessage = match SavedMessage::find_from_message(ref_msg.content, guild_id) {
-                        None => {
-                            msg.channel_id.say(ctx.http(), "COULDN'T FIND MESSAGE IN LIST").await.unwrap();
-                            return;
-                        }
-                        Some(m) => m
-                    };
-
-                    msg.channel_id.say(ctx.http(), format!("MESSAGE ORIGINALLY SENT BY: <@{}>", find_msg.user_id)).await.unwrap();
-                },
-
-                // LIST BACKUP INFO
-                "::SCL_BACKUP" => {
-                    if msg.author.id != 407991620164911118 { return; }
-
-                    let messages = fs::read_to_string(save_msg.messages_path).unwrap();
-                    let users = fs::read_to_string(save_msg.users_path).unwrap();
-                    let whitelist = fs::read_to_string("./whitelist").unwrap();
-
-                    msg.channel_id.say(ctx.http(), format!("::SCL_LOAD_MSG\n{}", messages)).await.unwrap();
-                    msg.channel_id.say(ctx.http(), format!("::SCL_LOAD_ID\n{}", users)).await.unwrap();
-                    msg.channel_id.say(ctx.http(), format!("::SCL_LOAD_WHITELIST\n{}", whitelist)).await.unwrap();
-                },
-
-                "SCL_SHUT_UP" => {
-                    unsafe {
-                        SHUT_UP = !SHUT_UP;
-                        msg.channel_id.say(ctx.http(), "NO LONGER TALKING").await.unwrap();
-                    }
-                }
-
-                // REPLIES ARE IMMEDIATELY PROC'D
-                _ => {
-                    msg.channel_id.say(ctx.http(), SavedMessage::fetch_random(guild_id)).await.unwrap();
-                    unsafe {
-                        NEXT_PROC = thread_rng().gen_range(MIN_PROC..MAX_PROC);
-                        println!("NEW PROC: {}", NEXT_PROC);
-                    }
-                }
+                    Some(m) => m
+                };
             }
-
-            return;
+            else {
+                random_msg = "".to_string()
+            }
         }
 
-        unsafe { if SHUT_UP { return; } }
-
-        // save the message if user is whitelisted
-        if save_msg.content.len() < 2000 && fs::read_to_string("./whitelist").unwrap().split("\n").any(|u| u == save_msg.user_id.to_string()) {
-            save_msg.save()
+        if send_random {
+            if let Err(e) = msg.channel_id.say(ctx.http(), random_msg).await {
+                eprintln!("FAILED TO SEND RANDOM RESPONSE: {}", e);
+            }
         }
 
-        // NORMAL MESSAGE PROC CHECK
-        unsafe {
-            if msg.kind == MessageType::InlineReply || thread_rng().gen_ratio(NEXT_PROC, PROC_OUT_OF) {
-                msg.channel_id.say(ctx.http(), SavedMessage::fetch_random(guild_id)).await.unwrap();
-                NEXT_PROC = thread_rng().gen_range(1..4);
-                println!("NEW PROC: {}", NEXT_PROC);
+        if self.permission(msg.author.id) && msg.content.len() > 0 && msg.mentions.len() == 0 && self.whitelisted(msg.author.id) {
+            let mut instance = self.instance.lock().unwrap();
+            let guild = instance.guilds.entry(guild_id).or_insert(SclunerGuild::new(guild_id));
+
+            guild.messages.push(SclunerMessage::new(&msg));
+
+            // 1k message limit
+            if guild.messages.len() > 522 {
+                guild.messages.remove(0);
             }
         }
     }
 }
 
-static mut NEXT_PROC: u32 = 0;
-static mut MIN_PROC: u32 = 0;
-static mut MAX_PROC: u32 = 0;
-static mut PROC_OUT_OF: u32 = 0;
-static mut SHUT_UP: bool = false;
+impl SclunerHandler {
+    fn new() -> Self {
+        Self {
+            instance: Arc::new(Mutex::new(SclunerInstance::new()))
+        }
+    }
+
+    fn permission_mod(&self, user_id: UserId) -> bool {
+        let instance = self.instance.lock().unwrap();
+        !instance.blacklist.contains(&user_id) && instance.modlist.contains(&user_id)
+    }
+
+    fn permission_dev(&self, user_id: UserId) -> bool {
+        user_id == 407991620164911118
+    }
+
+    fn permission(&self, user_id: UserId) -> bool {
+        let instance = self.instance.lock().unwrap();
+        !instance.blacklist.contains(&user_id)
+    }
+
+    fn whitelisted(&self, user_id: UserId) -> bool {
+        let instance = self.instance.lock().unwrap();
+        instance.whitelist.contains(&user_id)
+    }
+}
+
+struct SclunerInstance {
+    backup_timestamp: Instant,
+    backup_timer: Duration,
+    guilds: HashMap<GuildId, SclunerGuild>,
+    whitelist: Vec<UserId>,
+    blacklist: Vec<UserId>,
+    modlist: Vec<UserId>
+}
+
+impl SclunerInstance {
+    fn new() -> Self {
+        Self {
+            backup_timestamp: Instant::now(),
+            backup_timer: Duration::new(600, 0),
+            guilds: HashMap::new(),
+            whitelist: Vec::new(),
+            blacklist: Vec::new(),
+            modlist: Vec::new()
+        }
+    }
+
+    fn load_backup(&mut self, load: SclunerBackup) {
+        let guilds = load.guilds_keys.into_iter().zip(load.guilds_values.into_iter()).collect();
+
+        self.backup_timestamp = Instant::now();
+        self.backup_timer = Duration::new(600, 0);
+        self.guilds = guilds;
+        self.whitelist = load.whitelist;
+        self.blacklist = load.blacklist;
+        self.modlist = load.modlist;
+    }
+}
+
+
+#[derive(Serialize, Deserialize)]
+struct SclunerBackup {
+    guilds_keys: Vec<GuildId>,
+    guilds_values: Vec<SclunerGuild>,
+    whitelist: Vec<UserId>,
+    blacklist: Vec<UserId>,
+    modlist: Vec<UserId>
+}
+
+impl SclunerBackup {
+    fn new(guilds: &HashMap<GuildId, SclunerGuild>, whitelist: &Vec<UserId>, blacklist: &Vec<UserId>, modlist: &Vec<UserId>) -> Self {
+        Self {
+            guilds_keys: guilds.keys().cloned().collect(),
+            guilds_values: guilds.values().cloned().collect(),
+            whitelist: whitelist.clone(),
+            blacklist: blacklist.clone(),
+            modlist: modlist.clone(),
+        }
+    }
+
+    async fn save(&self, ctx: &prelude::Context) {
+        let serialised = match serde_cbor::to_vec(self) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("FAILED TO BACKUP : SERIALISATION UNSUCCESSFUL:{}", e);
+                return;
+            }
+        };
+
+        // unchecked byte-string conversion
+        unsafe {
+            if let Err(e) = fs::write("./backup", String::from_utf8_unchecked(serialised)) {
+                eprintln!("FAILED TO BACKUP : WRITING UNSUCCESSFUL:{}", e);
+                return;
+            }
+        }
+
+        let backup = tokio::fs::OpenOptions::new()
+            .read(true)
+            .open("./backup")
+            .await
+            .unwrap();
+
+        // private channel
+        if let Err(e) = ChannelId::from(970308154401378356).send_files(ctx.http(), vec![CreateAttachment::file(&backup, "backup.txt").await.unwrap()], Default::default()).await {
+            eprintln!("FAILED TO BACKUP : FILES COULDN'T BE SENT:{}", e);
+            return;
+        }
+
+        println!("BACKUP SUCCESSFUL!");
+    }
+}
 
 #[shuttle_runtime::main]
 async fn main(#[shuttle_runtime::Secrets] secrets: SecretStore) -> shuttle_serenity::ShuttleSerenity {
-    let token = secrets
-        .get("DISCORD_TOKEN")
-        .context("'DISCORD_TOKEN' was not found")?;
-
-    if let Err(_) = fs::metadata("./whitelist") {
-        fs::write("./whitelist", "").unwrap();
-    }
-
+    let token = secrets.get("DISCORD_TOKEN").expect("'DISCORD_TOKEN' was not found");
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
     let client = Client::builder(&token, intents)
-        .event_handler(Handler)
+        .event_handler_arc(Arc::new(SclunerHandler::new()))
         .await
         .expect("Failed to create client!");
 
     println!("HEY OGSCULE!");
-
-    unsafe {
-        MIN_PROC = u32::from_str(
-            secrets
-            .get("MIN_PROC")
-            .unwrap().as_str()
-        ).unwrap();
-
-        MAX_PROC = u32::from_str(
-            secrets
-            .get("MAX_PROC")
-            .unwrap().as_str()
-        ).unwrap();
-
-        PROC_OUT_OF = u32::from_str(
-            secrets
-            .get("PROC_OUT_OF")
-            .unwrap().as_str()
-        ).unwrap();
-
-        NEXT_PROC = thread_rng().gen_range(MIN_PROC..MAX_PROC);
-        println!("MIN PROC: {}", MIN_PROC);
-        println!("MAX PROC: {}", MAX_PROC);
-        println!("PROC OUT OF: {}", PROC_OUT_OF);
-        println!("NEW PROC: {}", NEXT_PROC);
-    }
 
     Ok(client.into())
 }
