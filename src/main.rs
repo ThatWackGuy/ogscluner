@@ -83,7 +83,7 @@ impl SclunerGuild {
             };
 
             if keep_going { message += " ..." }
-            async_std::task::sleep(Duration::from_millis((250 * message.len()) as u64)).await;
+            async_std::task::sleep(Duration::from_millis((500 * message.split_whitespace().count()) as u64)).await;
 
             if let Err(e) = channel_id.say(ctx.http(), message).await {
                 eprintln!("FAILED TO SEND RANDOM RESPONSE: {}", e);
