@@ -67,11 +67,11 @@ impl SclunerGuild {
     async fn send_random(&mut self, ctx: &serenity::Context, channel_id: ChannelId) {
         let messages = &self.messages;
 
-        // fake typing
-        let typing = channel_id.start_typing(&ctx.http);
-
         let mut keep_going = true;
         while keep_going {
+            // fake typing
+            let typing = channel_id.start_typing(&ctx.http);
+
             keep_going = thread_rng().gen_ratio(1, 4);
 
             let mut message = match messages.choose(&mut thread_rng()) {
@@ -83,20 +83,19 @@ impl SclunerGuild {
             };
 
             if keep_going { message += " ..." }
-            async_std::task::sleep(Duration::from_millis((500 * message.split_whitespace().count()) as u64)).await;
+            async_std::task::sleep(Duration::from_millis((100 * message.split_whitespace().count()) as u64)).await;
 
             if let Err(e) = channel_id.say(ctx.http(), message).await {
                 eprintln!("FAILED TO SEND RANDOM RESPONSE: {}", e);
             }
+            typing.stop();
         }
-
-        typing.stop();
     }
 
     async fn maybe_react_random(&mut self, ctx: &serenity::Context, msg: &Message) {
         let emojis = self.guild_id.emojis(ctx.http()).await.unwrap();
 
-        let mut keep_going = thread_rng().gen_ratio(1, 4);
+        let mut keep_going = thread_rng().gen_ratio(1, 8);
         while keep_going {
             keep_going = thread_rng().gen_ratio(1, 4);
 
@@ -112,10 +111,6 @@ impl SclunerGuild {
         self.messages.iter().filter(|m| m.content.contains(&content)).collect()
     }
 
-    fn fetch_from_user(&mut self, user_id: UserId) -> Vec<&SclunerMessage> {
-        self.messages.iter().filter(|m| m.user_id == user_id).collect()
-    }
-
     fn delete_message_sender(&mut self, user_id: UserId) {
         self.messages.retain(|m| m.user_id != user_id);
     }
@@ -126,7 +121,8 @@ impl SclunerGuild {
 }
 
 struct SclunerInstance {
-    time_since_backup: Instant,
+    startup_instant: Instant,
+    backup_instant: Instant,
     guilds: HashMap<GuildId, SclunerGuild>,
     whitelist: Vec<UserId>,
     blacklist: Vec<UserId>,
@@ -135,7 +131,8 @@ struct SclunerInstance {
 impl SclunerInstance {
     fn new() -> Self {
         Self {
-            time_since_backup: Instant::now(),
+            startup_instant: Instant::now(),
+            backup_instant: Instant::now(),
             guilds: HashMap::new(),
             whitelist: Vec::new(),
             blacklist: Vec::new(),
@@ -164,7 +161,7 @@ impl SclunerInstance {
     fn load_backup(&mut self, load: SclunerBackup) {
         let guilds = load.guilds_keys.into_iter().zip(load.guilds_values).collect();
 
-        self.time_since_backup = Instant::now();
+        self.backup_instant = Instant::now();
         self.guilds = guilds;
         self.whitelist = load.whitelist;
         self.blacklist = load.blacklist;
@@ -193,7 +190,7 @@ async fn event_handler(
             let mut data = data.lock().await;
 
             // auto backup per day
-            if data.time_since_backup.elapsed().as_secs() >= 86400 {
+            if data.backup_instant.elapsed().as_secs() >= 86400 {
                 data.save_backup(ctx).await;
             }
 
@@ -221,7 +218,8 @@ async fn event_handler(
 
                 // message limit
                 if guild.messages.len() > 2222 {
-                    guild.messages.remove(0);
+                    let remove_idx = thread_rng().gen_range(1000..=2222);
+                    guild.messages.swap_remove(remove_idx);
                 }
             }
         }
@@ -242,8 +240,8 @@ async fn main(#[shuttle_runtime::Secrets] secrets: SecretStore) -> shuttle_seren
                 // USER
                 delete_content(),
                 info_content(),
-                info_user(),
                 info_proc(),
+                info(),
 
                 // MODS
                 delete_user(),
