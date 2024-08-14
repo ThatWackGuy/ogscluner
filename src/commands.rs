@@ -34,7 +34,7 @@ pub async fn user_check(ctx: Context<'_>) -> Result<bool, Error> {
 
 /// USER COMMAND
 /// Deletes all memories with the given content
-#[poise::command(prefix_command, guild_only, check="user_check", identifying_name="DELETE_CONTENT")]
+#[poise::command(prefix_command, guild_only, check="user_check")]
 pub async fn delete_content(ctx: Context<'_>) -> Result<(), Error> {
     let mut data = ctx.data().lock().await;
     let msg = ctx_prefix(&ctx).msg;
@@ -53,7 +53,7 @@ pub async fn delete_content(ctx: Context<'_>) -> Result<(), Error> {
 
 /// USER COMMAND
 /// Fetches the information of the posted memory
-#[poise::command(prefix_command, guild_only, check="user_check", identifying_name="INFO_CONTENT")]
+#[poise::command(prefix_command, guild_only, check="user_check")]
 pub async fn info_content(ctx: Context<'_>) -> Result<(), Error> {
     let msg = ctx_prefix(&ctx).msg;
 
@@ -77,7 +77,7 @@ pub async fn info_content(ctx: Context<'_>) -> Result<(), Error> {
 
 /// USER COMMAND
 /// Shows the proc variables
-#[poise::command(prefix_command, guild_only, check="user_check", identifying_name="WHITELIST")]
+#[poise::command(prefix_command, guild_only, check="user_check")]
 pub async fn info_proc(ctx: Context<'_>) -> Result<(), Error> {
     let mut data = ctx.data().lock().await;
     let guild = data.guilds.get_mut(&ctx.guild_id().unwrap()).unwrap();
@@ -93,8 +93,31 @@ pub async fn info_proc(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// USER COMMAND
+/// Shows the proc variables
+#[poise::command(prefix_command, guild_only, check="user_check")]
+pub async fn info(ctx: Context<'_>) -> Result<(), Error> {
+    let mut data = ctx.data().lock().await;
+
+    let running_time = data.startup_instant.elapsed().as_secs() / 3600;
+    let backup_time = data.backup_instant.elapsed().as_secs() / 3600;
+    let guilds_len = data.guilds.len();
+
+    let guild = data.guilds.get_mut(&ctx.guild_id().unwrap()).unwrap();
+
+    let info = format!("SClUNER v{}, RUNNING FOR: {}h, TIME SINCE BACKUP: {}h, ON {} GUILDS, STORING {} MESSAGES ON CURRENT ONE",
+        env!("CARGO_PKG_VERSION"),
+        running_time,
+        backup_time,
+        guilds_len,
+        guild.messages.len()
+    );
+
+    fix_say_result(ctx.channel_id().say(ctx.http(), info).await)
+}
+
+/// USER COMMAND
 /// Registers or unregisters the user
-#[poise::command(prefix_command, guild_only, check="user_check", identifying_name="WHITELIST")]
+#[poise::command(prefix_command, guild_only, check="user_check")]
 pub async fn whitelist(ctx: Context<'_>) -> Result<(), Error> {
     let mut data = ctx.data().lock().await;
     let user_id = ctx.author().id;
@@ -111,7 +134,7 @@ pub async fn whitelist(ctx: Context<'_>) -> Result<(), Error> {
 
 /// MODERATOR COMMAND
 /// Deletes all memories by given user
-#[poise::command(prefix_command, guild_only, check="mod_check", identifying_name="DELETE_USER")]
+#[poise::command(prefix_command, guild_only, check="mod_check")]
 pub async fn delete_user(ctx: Context<'_>, user: User) -> Result<(), Error> {
     ctx.data().lock().await.guilds.get_mut(&ctx.guild_id().unwrap()).unwrap().delete_message_sender(user.id);
 
@@ -119,23 +142,8 @@ pub async fn delete_user(ctx: Context<'_>, user: User) -> Result<(), Error> {
 }
 
 /// MODERATOR COMMAND
-/// Fetches all memories by given user
-#[poise::command(prefix_command, guild_only, check="mod_check", identifying_name="INFO_USER")]
-pub async fn info_user(ctx: Context<'_>, user: User) -> Result<(), Error>  {
-    let mut data = ctx.data().lock().await;
-    let guild = data.guilds.get_mut(&ctx.guild_id().unwrap()).unwrap();
-
-    let mut fetched_info = "MESSAGES SENT BY GIVEN USER:\n".to_string();
-    for fetched in guild.fetch_from_user(user.id) {
-        fetched_info += format!("{}\n", fetched.content).as_str();
-    }
-
-    fix_say_result(ctx.channel_id().say(ctx.http(), fetched_info).await)
-}
-
-/// MODERATOR COMMAND
 /// Sets the proc variables
-#[poise::command(prefix_command, guild_only, check="mod_check", identifying_name="PROC")]
+#[poise::command(prefix_command, guild_only, check="mod_check")]
 pub async fn proc(ctx: Context<'_>, min: u32, max: u32, out_of: u32) -> Result<(), Error> {
     let mut data = ctx.data().lock().await;
     let guild = data.guilds.get_mut(&ctx.guild_id().unwrap()).unwrap();
@@ -149,7 +157,7 @@ pub async fn proc(ctx: Context<'_>, min: u32, max: u32, out_of: u32) -> Result<(
 
 /// MODERATOR COMMAND
 /// mutes or unmutes the bot
-#[poise::command(prefix_command, guild_only, check="mod_check", identifying_name="SLEEP")]
+#[poise::command(prefix_command, guild_only, check="mod_check")]
 pub async fn sleep(ctx: Context<'_>) -> Result<(), Error> {
     let mut data = ctx.data().lock().await;
     let guild = data.guilds.get_mut(&ctx.guild_id().unwrap()).unwrap();
@@ -164,7 +172,7 @@ pub async fn sleep(ctx: Context<'_>) -> Result<(), Error> {
 
 /// DEV COMMAND
 /// Adds a moderator
-#[poise::command(prefix_command, guild_only, check="dev_check", identifying_name="MOD")]
+#[poise::command(prefix_command, guild_only, check="dev_check")]
 pub async fn moderator(ctx: Context<'_>, user: User) -> Result<(), Error> {
     let mut data = ctx.data().lock().await;
     if data.modlist.contains(&user.id) {
@@ -179,7 +187,7 @@ pub async fn moderator(ctx: Context<'_>, user: User) -> Result<(), Error> {
 
 /// DEV COMMAND
 /// Forces a backup
-#[poise::command(prefix_command, guild_only, check="dev_check", identifying_name="BACKUP_SEND")]
+#[poise::command(prefix_command, guild_only, check="dev_check")]
 pub async fn backup_send(ctx: Context<'_>) -> Result<(), Error> {
     let data = ctx.data().lock().await;
     data.save_backup(ctx.serenity_context()).await;
@@ -188,7 +196,7 @@ pub async fn backup_send(ctx: Context<'_>) -> Result<(), Error> {
 
 /// DEV COMMAND
 /// Loads given backup
-#[poise::command(prefix_command, guild_only, check="dev_check", identifying_name="BACKUP_LOAD")]
+#[poise::command(prefix_command, guild_only, check="dev_check")]
 pub async fn backup_load(ctx: Context<'_>, file: Attachment) -> Result<(), Error> {
     let backup_bytes = match file.download().await {
         Ok(f) => f,
