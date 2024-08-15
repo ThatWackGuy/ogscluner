@@ -104,7 +104,7 @@ pub async fn info(ctx: Context<'_>) -> Result<(), Error> {
 
     let guild = data.guilds.get_mut(&ctx.guild_id().unwrap()).unwrap();
 
-    let info = format!("SClUNER v{}, RUNNING FOR: {}h, TIME SINCE BACKUP: {}h, ON {} GUILDS, STORING {} MESSAGES ON CURRENT ONE",
+    let info = format!("SCLUNER v{}\nRUNNING FOR: {}h\nTIME SINCE BACKUP: {}h\nON {} GUILDS\nSTORING {} MESSAGES ON CURRENT ONE",
         env!("CARGO_PKG_VERSION"),
         running_time,
         backup_time,

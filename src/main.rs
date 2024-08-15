@@ -189,9 +189,10 @@ async fn event_handler(
             };
             let mut data = data.lock().await;
 
-            // auto backup per day
-            if data.backup_instant.elapsed().as_secs() >= 86400 {
+            // auto backup per 12 hours
+            if data.backup_instant.elapsed().as_secs() >= 43200 {
                 data.save_backup(ctx).await;
+                data.backup_instant = Instant::now();
             }
 
             let whitelisted = data.whitelist.contains(&msg.author.id);
