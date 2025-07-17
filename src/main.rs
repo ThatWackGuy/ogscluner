@@ -198,13 +198,16 @@ impl SclunerInstance {
 
         mutators.shuffle(&mut rng());
 
+        let mut stacker = input.clone();
+
         for mutator in mutators {
-            if let Some(m) = mutator.mutate(input.clone(), ctx, guild).await {
-                return m;
+            match mutator.mutate(stacker.clone(), ctx, guild).await {
+                Some(s) => stacker = s,
+                None => {}
             }
         }
 
-        input
+        stacker
     }
 
     async fn save_backup(&self, ctx: &serenity::Context) {
