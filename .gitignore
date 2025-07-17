@@ -1,4 +1,6 @@
 /target
 Secrets*.toml
 .idea
+.shuttle
+Cargo.lock.shuttle*
 Cargo.lock
