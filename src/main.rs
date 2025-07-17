@@ -298,8 +298,6 @@ async fn event_handler(
             };
 
             data.lock().await.load_backup(backup);
-
-            use_backup.reply(ctx.http(), "SUCCESSFULLY LOADED LAST BACKUP").await.unwrap();
             println!("Loaded last backup!");
         }
 
