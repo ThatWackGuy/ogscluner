@@ -1,4 +1,4 @@
-﻿use std::collections::HashMap;
+use std::collections::HashMap;
 use poise::serenity_prelude::*;
 use serde::{Deserialize, Serialize};
 use crate::{SclunerGuild, SclunerMessage};

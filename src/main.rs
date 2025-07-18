@@ -111,9 +111,9 @@ impl SclunerGuild {
                 }
                 Some(m) => {
                     // reply to message if it's left behind
-                    let msg = m.channel_id.messages(ctx.http(), GetMessages::new().limit(1)).await.unwrap().pop().unwrap();
+                    let last_message_in_channel = channel_id.messages(ctx.http(), GetMessages::new().limit(1)).await.unwrap().pop().unwrap();
 
-                    if msg.id != m.id {
+                    if last_message_in_channel.id != m.id {
                         match m.reply(ctx.http(), message).await {
                             Ok(m) => Some(m),
                             Err(e) => {
@@ -201,9 +201,8 @@ impl SclunerInstance {
         let mut stacker = input.clone();
 
         for mutator in mutators {
-            match mutator.mutate(stacker.clone(), ctx, guild).await {
-                Some(s) => stacker = s,
-                None => {}
+            if let Some(s) = mutator.mutate(stacker.clone(), ctx, guild).await {
+                stacker = s;
             }
         }
 
@@ -315,6 +314,7 @@ async fn event_handler(
                 None => return Ok(()),
                 Some(g) => g,
             };
+
             let mut data = data.lock().await;
 
             // auto backup per 12 hours
@@ -338,12 +338,15 @@ async fn event_handler(
             }
 
             guild.maybe_react_random(ctx, msg).await;
+            println!("\tReact proc done.");
 
             // reply if we procced, or they're pinging it or replying to it
             if rng().random_ratio(guild.proc, guild.proc_out_of)
                 || msg.mentions_me(ctx.http()).await.unwrap()
             {
+                 println!("\tReply proc!");
                 guild.send_random(ctx, msg.channel_id).await;
+                println!("\tReply proc done.");
             }
 
             if msg.mentions.is_empty()
@@ -361,6 +364,8 @@ async fn event_handler(
                     guild.messages.swap_remove(remove_idx);
                 }
             }
+
+            drop(data);
         }
         _ => {}
     }

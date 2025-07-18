@@ -8,6 +8,7 @@ use serde::{Serialize, Deserialize};
 use crate::SclunerGuild;
 
 pub type MutatorRef = Arc<dyn MessageMutator + Send + Sync>;
+
 #[async_trait]
 pub trait MessageMutator: Send + Sync {
     async fn mutate(&self, input: String, ctx: &Context, guild: &SclunerGuild) -> Option<String>;
@@ -75,15 +76,15 @@ impl MessageMutator for MessageSplicer {
         // Take most from input if its larger
         if splicing_input {
             let input_range = rng().random_range(0..input_len);
-            let input_slice: String = input_tokens.take(input_range).collect();
-            let random_slice: String = random_tokens.skip(input_range).collect();
+            let input_slice = input_tokens.take(input_range).collect::<Vec<&str>>().join(" ");
+            let random_slice = random_tokens.skip(input_range).collect::<Vec<&str>>().join(" ");
 
             return Some(input_slice + random_slice.as_str())
         }
 
         let random_range = rng().random_range(0..random_len);
-        let random_slice: String = random_tokens.take(random_range).collect();
-        let input_slice: String = input_tokens.skip(random_range).collect();
+        let random_slice = random_tokens.take(random_range).collect::<Vec<&str>>().join(" ");
+        let input_slice = input_tokens.skip(random_range).collect::<Vec<&str>>().join(" ");
 
         Some(random_slice + input_slice.as_str())
     }
@@ -115,41 +116,66 @@ impl MessageMutator for Misgendering {
             "their"
         ];
 
+        const VALID_CHECK: [&str; 12] = [
+            "he",
+            "she",
+            "it",
+            "they",
+
+            "him",
+            "her",
+            "it",
+            "them",
+
+            "his",
+            "her",
+            "its",
+            "their"
+        ];
+
+        let mut any_contained = false;
+        for p in VALID_CHECK {
+            if input.contains(p) {
+                any_contained = true;
+                break;
+            }
+        };
+
+        if !any_contained {
+            return None;
+        }
+
         let mut tokens = input.split_whitespace();
-        let mut unchanged = true;
+        let mut unchanged = 0;
         let mut output = String::new();
 
-        while unchanged {
+        while unchanged <= 10 {
             for token in &mut tokens {
-                let valid_pronoun = VALID_PRONOUNS.contains(&token);
-                let valid_owning_pronoun = VALID_PRONOUNS_OWNING.contains(&token);
-                let valid_other_pronoun = VALID_PRONOUNS_OTHER.contains(&token);
+                let token_lowercase = token.to_lowercase();
+                let token_lowercase_str = token_lowercase.as_str();
 
-                if valid_pronoun || valid_owning_pronoun ||valid_other_pronoun {
-                    if !rng().random_ratio(1, 3) {
-                        output += token;
-                        output += " ";
+                let valid_pronoun = VALID_PRONOUNS.contains(&token_lowercase_str);
+                let valid_owning_pronoun = VALID_PRONOUNS_OWNING.contains(&token_lowercase_str);
+                let valid_other_pronoun = VALID_PRONOUNS_OTHER.contains(&token_lowercase_str);
 
-                        continue;
-                    }
-
+                let mut token_add = token;
+                if (valid_pronoun || valid_owning_pronoun || valid_other_pronoun) && rng().random_ratio(1, 3) {
+                    
                     if valid_pronoun {
-                        output += VALID_PRONOUNS.choose(&mut rng()).unwrap();
+                        token_add = VALID_PRONOUNS.choose(&mut rng()).unwrap();
                     }
                     else if valid_owning_pronoun {
-                        output += VALID_PRONOUNS_OWNING.choose(&mut rng()).unwrap();
+                        token_add = VALID_PRONOUNS_OWNING.choose(&mut rng()).unwrap();
                     }
                     else if valid_other_pronoun {
-                        output += VALID_PRONOUNS_OTHER.choose(&mut rng()).unwrap();
+                        token_add = VALID_PRONOUNS_OTHER.choose(&mut rng()).unwrap();
                     }
 
-                    output += " ";
-
-                    unchanged = false;
+                    unchanged = 11;
                     continue;
                 }
 
-                output += token;
+                output += token_add;
                 output += " ";
             }
         }

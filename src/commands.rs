@@ -1,4 +1,4 @@
-﻿use poise::serenity_prelude::*;
+use poise::serenity_prelude::*;
 use crate::scluner_backup::{SclunerBackup, SclunerBackupCompat};
 use crate::{Context, DataContext, Error};
 
