@@ -1,5 +1,5 @@
-﻿use poise::serenity_prelude::*;
-use crate::scluner_backup::SclunerBackup;
+use poise::serenity_prelude::*;
+use crate::scluner_backup::{SclunerBackup, SclunerBackupCompat};
 use crate::{Context, DataContext, Error};
 
 fn fix_say_result<U>(faulty: Result<U>) -> Result<(), Error> {
@@ -212,4 +212,22 @@ pub async fn backup_load(ctx: Context<'_>, file: Attachment) -> Result<(), Error
     ctx.data().lock().await.load_backup(backup);
 
     fix_say_result(ctx.channel_id().say(ctx.http(), "SUCCESSFULLY LOADED BACKUP").await)
+}
+
+#[poise::command(prefix_command, guild_only, check="dev_check")]
+pub async fn backup_load_compat(ctx: Context<'_>, file: Attachment) -> Result<(), Error> {
+    let backup_bytes = match file.download().await {
+        Ok(f) => f,
+        Err(e) => return fix_say_result(ctx.channel_id().say(ctx.http(), format!("FILE COULDN'T BE DOWNLOADED: {}", e)).await)
+    };
+
+
+    let backup = match ciborium::from_reader::<SclunerBackupCompat, &[u8]>(&backup_bytes) {
+        Ok(b) => b,
+        Err(e) => return fix_say_result(ctx.channel_id().say(ctx.http(), format!("FILE COULDN'T BE DESERIALIZED: {}", e)).await)
+    };
+
+    ctx.data().lock().await.load_backup(backup.modernise());
+
+    fix_say_result(ctx.channel_id().say(ctx.http(), "SUCCESSFULLY COMPAT LOADED BACKUP").await)
 }
