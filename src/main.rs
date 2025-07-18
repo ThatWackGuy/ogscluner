@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::vec;
@@ -176,16 +177,18 @@ impl SclunerGuild {
 struct SclunerInstance {
     startup_instant: Instant,
     backup_instant: Instant,
+    backup_channel_id: ChannelId,
     guilds: HashMap<GuildId, SclunerGuild>,
     whitelist: Vec<UserId>,
     blacklist: Vec<UserId>,
     modlist: Vec<UserId>,
 }
 impl SclunerInstance {
-    fn new() -> Self {
+    fn new(backup_channel_id: ChannelId) -> Self {
         Self {
             startup_instant: Instant::now(),
             backup_instant: Instant::now(),
+            backup_channel_id,
             guilds: HashMap::new(),
             whitelist: Vec::new(),
             blacklist: Vec::new(),
@@ -223,8 +226,8 @@ impl SclunerInstance {
             return;
         }
 
-        // private channel
-        if let Err(e) = ChannelId::from(1274472617218408478)
+        // Send the backup file
+        if let Err(e) = self.backup_channel_id
             .send_files(
                 ctx.http(),
                 vec![CreateAttachment::bytes(data, format!("{}.cbor", Timestamp::now()))],
@@ -267,11 +270,19 @@ async fn event_handler(
         } => {
             println!("HEY {}!", bot.user.name.to_ascii_uppercase());
 
-            let mut messages = ChannelId::from(1274472617218408478 /* private channel */).messages(ctx.http(), GetMessages::default()).await.unwrap();
+            let mut data = data.lock().await;
+
+            let mut messages = data.backup_channel_id.messages(ctx.http(), GetMessages::default()).await.unwrap();
+
+            // We don't care
+            if messages.len() == 0 {
+                eprintln!("No messages in backup channel!");
+                return Ok(());
+            }
         
             // Delete old backups
             if messages.len() > 5 {
-                for del in &mut messages[5..] {
+                for del in &mut messages[4..] {
                     let now = Timestamp::now();
                     if del.timestamp.signed_duration_since(*now).num_days() > 2 {
                         del.delete(ctx.http()).await.unwrap();
@@ -281,6 +292,12 @@ async fn event_handler(
 
             // Load last backup
             let use_backup = &messages[0];
+
+            // We don't care
+            if use_backup.attachments.len() == 0 {
+                eprintln!("Last message in backup channel didn't have a file!");
+                return Ok(());
+            }
     
             let file_attachment = &use_backup.attachments[0];
             let backup_bytes = file_attachment.download().await.unwrap();
@@ -299,7 +316,8 @@ async fn event_handler(
                 }
             };
 
-            data.lock().await.load_backup(backup);
+            data.load_backup(backup);
+            drop(data);
             println!("Loaded last backup!");
         }
 
@@ -382,6 +400,10 @@ async fn main(
         .expect("'DISCORD_TOKEN' was not found");
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
 
+    let backup_channel = secrets
+        .get("BACKUP_CHANNEL")
+        .expect("'DISCORD_TOKEN' was not found");
+
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![
@@ -414,7 +436,7 @@ async fn main(
             Box::pin(async move {
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
 
-                Ok(Arc::new(Mutex::from(SclunerInstance::new())))
+                Ok(Arc::new(Mutex::from(SclunerInstance::new(ChannelId::from_str(&backup_channel).unwrap()))))
             })
         })
         .build();
