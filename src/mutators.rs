@@ -90,96 +90,80 @@ impl MessageMutator for MessageSplicer {
     }
 }
 
+pub struct Pronouns<'a> {
+    pub primary: [&'a str; 4],
+    pub other: [&'a str; 4],
+    pub owning: [&'a str; 4],
+    pub all: [&'a str; 12],
+}
+
+// Internals for misgendering mutator
+impl Misgendering {
+    const PRONOUNS: Pronouns<'static> = Pronouns {
+        primary: ["he", "she", "it", "they"],
+        other: ["him", "her", "it", "them"],
+        owning: ["his", "her", "its", "their"],
+        all: [
+            "he", "she", "it", "they", "him", "her", "it", "them", "his", "her", "its", "their",
+        ],
+    };
+
+    fn randomize_pronoun(input: Vec<&str>, idx: usize) -> Vec<&str> {
+        let mut output: Vec<&str> = input.clone();
+        if Self::PRONOUNS.primary.contains(&input[idx]) {
+            output[idx] = Self::PRONOUNS.primary.choose(&mut rng()).unwrap();
+        } else if Self::PRONOUNS.other.contains(&input[idx]) {
+            output[idx] = Self::PRONOUNS.other.choose(&mut rng()).unwrap();
+        } else if Self::PRONOUNS.owning.contains(&input[idx]) {
+            output[idx] = Self::PRONOUNS.owning.choose(&mut rng()).unwrap();
+        }
+        return output;
+    }
+}
+
 #[async_trait] // Swaps around pronouns in the input
 impl MessageMutator for Misgendering {
     async fn mutate(&self, input: String, _: &Context, _: &SclunerGuild) -> Option<String> {
-        if !rng().random_ratio(1, 9) { return None }
+        if !rng().random_ratio(1, 9) {
+            return None;
+        }
 
-        const VALID_PRONOUNS: [&str; 4] = [
-            "he",
-            "she",
-            "it",
-            "they"
-        ];
-
-        const VALID_PRONOUNS_OTHER: [&str; 4] = [
-            "him",
-            "her",
-            "it",
-            "them"
-        ];
-
-        const VALID_PRONOUNS_OWNING: [&str; 4] = [
-            "his",
-            "her",
-            "its",
-            "their"
-        ];
-
-        const VALID_CHECK: [&str; 12] = [
-            "he",
-            "she",
-            "it",
-            "they",
-
-            "him",
-            "her",
-            "it",
-            "them",
-
-            "his",
-            "her",
-            "its",
-            "their"
-        ];
-
-        let mut any_contained = false;
-        for p in VALID_CHECK {
-            if input.contains(p) {
-                any_contained = true;
-                break;
-            }
-        };
+        let any_contained: bool = input.split_whitespace().any(|e| {
+            Misgendering::PRONOUNS
+                .all
+                .contains(&e.to_lowercase().as_str())
+        });
 
         if !any_contained {
             return None;
         }
 
-        let mut tokens = input.split_whitespace();
-        let mut unchanged = 0;
-        let mut output = String::new();
+        let mut new_tokens: Vec<&str> = input.split_whitespace().collect();
 
-        while unchanged <= 10 {
-            for token in &mut tokens {
-                let token_lowercase = token.to_lowercase();
-                let token_lowercase_str = token_lowercase.as_str();
+        // Save indexes where woke
+        let mut pronoun_indexes: Vec<usize> = Vec::new();
 
-                let valid_pronoun = VALID_PRONOUNS.contains(&token_lowercase_str);
-                let valid_owning_pronoun = VALID_PRONOUNS_OWNING.contains(&token_lowercase_str);
-                let valid_other_pronoun = VALID_PRONOUNS_OTHER.contains(&token_lowercase_str);
+        for (i, token) in new_tokens.iter().enumerate() {
+            let token_lowercase = token.to_lowercase();
+            let token_lowercase_str = token_lowercase.as_str();
 
-                let mut token_add = token;
-                if (valid_pronoun || valid_owning_pronoun || valid_other_pronoun) && rng().random_ratio(1, 3) {
-                    
-                    if valid_pronoun {
-                        token_add = VALID_PRONOUNS.choose(&mut rng()).unwrap();
-                    }
-                    else if valid_owning_pronoun {
-                        token_add = VALID_PRONOUNS_OWNING.choose(&mut rng()).unwrap();
-                    }
-                    else if valid_other_pronoun {
-                        token_add = VALID_PRONOUNS_OTHER.choose(&mut rng()).unwrap();
-                    }
-
-                    unchanged = 11;
-                    continue;
-                }
-
-                output += token_add;
-                output += " ";
+            if Misgendering::PRONOUNS.all.contains(&token_lowercase_str) {
+                pronoun_indexes.push(i);
             }
         }
 
-        Some(output)
+        // Make sure at least one pronoun is woked
+        let guaranteed_idx = pronoun_indexes
+            .swap_remove(pronoun_indexes[rng().random_range(0..pronoun_indexes.len())]);
+        new_tokens = Misgendering::randomize_pronoun(new_tokens, guaranteed_idx);
+
+        // 3/4 chance for each one to :3
+        for to_change_idx in pronoun_indexes {
+            if rng().random_ratio(3, 4) {
+                new_tokens = Misgendering::randomize_pronoun(new_tokens, to_change_idx);
+            }
+        }
+
+        Some(new_tokens.join(" "))
     }
 }
